@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>States Hangman</title>
+<style>
+  :root{--bg:#f3f6fb;--card:#fff;--accent:#0ea5e9;--bad:#ef4444;--ok:#16a34a;--muted:#6b7280}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;background:linear-gradient(180deg,#eef7ff,#f3f6fb);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;color:#0f172a;display:flex;align-items:center;justify-content:center;padding:20px}
+  .app{width:920px;max-width:100%;background:var(--card);border-radius:12px;padding:18px;box-shadow:0 10px 30px rgba(2,6,23,.08);display:grid;grid-template-columns:360px 1fr;gap:16px}
+  header{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+  h1{margin:0;font-size:18px}
+  .left{display:flex;flex-direction:column;gap:12px;align-items:stretch} /* stretch so content fills left column */
+  canvas{background:linear-gradient(#fff,#fbfdff);border-radius:8px;display:block;margin:0 auto}
+  .word{
+    font-size:28px;
+    letter-spacing:6px;
+    margin-top:8px;
+    font-weight:700;
+    white-space:nowrap;            /* keep word on a single line */
+    overflow-x:visible;           /* JS will scale instead of wrapping */
+    display:block;
+    padding:6px 8px;
+    text-align:center;            /* center the word inside the left panel */
+  }
+  .controls{display:flex;gap:8px;margin-top:8px}
+  button{cursor:pointer;border:0;border-radius:8px;padding:8px 10px;font-weight:700}
+  .btn-primary{background:var(--accent);color:white}
+  .btn-ghost{background:#eef2f7;color:var(--accent);border:1px solid #d6eefb}
+  .right{display:flex;flex-direction:column;gap:12px;padding:8px 6px}
+  .letters{display:flex;flex-wrap:wrap;gap:6px}
+  .letter-btn{width:40px;height:40px;border-radius:8px;background:#fff;border:1px solid #e6eef6;font-weight:700;cursor:pointer}
+  .letter-btn.disabled{opacity:.5;cursor:default}
+  .status{min-height:20px;font-weight:700}
+  .status.win{color:var(--ok)}
+  .status.lose{color:var(--bad)}
+  .meta{display:flex;justify-content:space-between;color:var(--muted);font-size:13px;margin-top:6px}
+  .small{font-size:13px;color:var(--muted)}
+  .wrong{color:var(--bad);font-weight:700}
+  .hint{font-size:13px;color:var(--muted);margin-top:6px}
+  footer{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;margin-top:6px;color:var(--muted);font-size:13px}
+  @media (max-width:860px){.app{grid-template-columns:1fr;}}
+</style>
+</head>
+<body>
+<main class="app" role="main" aria-live="polite">
+  <header>
+    <h1>Hangman — U.S. States Edition</h1>
+    <div>
+      <span class="small">Wins: <strong id="wins">0</strong></span>
+      <span style="margin-left:12px" class="small">Losses: <strong id="losses">0</strong></span>
+    </div>
+  </header>
+
+  <section class="left" aria-label="Hangman drawing and word">
+    <canvas id="hangman" width="340" height="340" aria-hidden="false"></canvas>
+    <div class="word" id="word" aria-live="polite">—</div>
+    <div class="hint" id="hint">Pick letters to guess the state name.</div>
+    <div class="controls">
+      <button id="nextBtn" class="btn-primary">Next</button>
+      <button id="restartBtn" class="btn-ghost">Restart</button>
+      <button id="revealBtn" class="btn-ghost">Reveal</button>
+    </div>
+  </section>
+
+  <section class="right" aria-label="Game controls and letters">
+    <div class="status" id="status">Ready — choose a letter</div>
+    <div class="meta">
+      <div class="small">Wrong guesses: <span id="wrongCount">0</span> / <strong id="maxWrong">6</strong></div>
+      <div class="small">Round: <span id="round">0</span></div>
+    </div>
+
+    <div style="margin-top:8px">
+      <div class="small">Wrong letters:</div>
+      <div id="wrongLetters" class="wrong" aria-live="polite"></div>
+    </div>
+
+    <div style="margin-top:12px">
+      <div class="small">Choose a letter (or use keyboard):</div>
+      <div id="letters" class="letters" role="group" aria-label="Alphabet letters"></div>
+    </div>
+
+    <div style="margin-top:12px">
+      <div class="small">Tip: spaces and punctuation are auto-filled. You only guess A–Z letters.</div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="small">Keyboard: type letters A–Z to guess, <strong>N</strong> next, <strong>R</strong> restart, <strong>V</strong> reveal</div>
+    <div class="small" id="winRate">Win rate: 0%</div>
+  </footer>
+</main>
+
+<script>
+(function(){
+  // Data: states list
+  const STATES = [
+"Alabama","Alaska","Arizona","Arkansas","California","Colorado","Connecticut","Delaware","Florida","Georgia",
+"Hawaii","Idaho","Illinois","Indiana","Iowa","Kansas","Kentucky","Louisiana","Maine","Maryland",
+"Massachusetts","Michigan","Minnesota","Mississippi","Missouri","Montana","Nebraska","Nevada","New Hampshire","New Jersey",
+"New Mexico","New York","North Carolina","North Dakota","Ohio","Oklahoma","Oregon","Pennsylvania","Rhode Island","South Carolina",
+"South Dakota","Tennessee","Texas","Utah","Vermont","Virginia","Washington","West Virginia","Wisconsin","Wyoming"
+  ];
+
+  // UI refs
+  const canvas = document.getElementById('hangman');
+  const ctx = canvas.getContext('2d');
+  const wordEl = document.getElementById('word');
+  const lettersEl = document.getElementById('letters');
+  const statusEl = document.getElementById('status');
+  const wrongLettersEl = document.getElementById('wrongLetters');
+  const wrongCountEl = document.getElementById('wrongCount');
+  const maxWrongEl = document.getElementById('maxWrong');
+  const nextBtn = document.getElementById('nextBtn');
+  const restartBtn = document.getElementById('restartBtn');
+  const revealBtn = document.getElementById('revealBtn');
+  const winsEl = document.getElementById('wins');
+  const lossesEl = document.getElementById('losses');
+  const roundEl = document.getElementById('round');
+  const winRateEl = document.getElementById('winRate');
+
+  // Game config
+  const MAX_WRONG = 6;
+  maxWrongEl.textContent = MAX_WRONG;
+
+  // Game state
+  let secret = '';
+  let display = []; // array of characters and underscores
+  let wrongLetters = [];
+  let usedLetters = new Set();
+  let wrongCount = 0;
+  let wins = 0, losses = 0;
+  let round = 0;
+
+  // Build alphabet buttons
+  const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+  function buildAlphabet(){
+    lettersEl.innerHTML = '';
+    ALPHABET.forEach(ch => {
+      const b = document.createElement('button');
+      b.className = 'letter-btn';
+      b.textContent = ch;
+      b.dataset.letter = ch;
+      b.addEventListener('click', () => tryLetter(ch));
+      lettersEl.appendChild(b);
+    });
+  }
+
+  // Pick new secret
+  function pickSecret(){
+    secret = STATES[Math.floor(Math.random()*STATES.length)].toUpperCase();
+    // prepare display: letters replaced by underscore, spaces/punct left as-is
+    display = Array.from(secret).map(c => /[A-Z]/.test(c) ? '_' : c);
+    usedLetters.clear();
+    wrongLetters = [];
+    wrongCount = 0;
+    round++;
+    roundEl.textContent = round;
+    updateUI();
+    drawBase();
+  }
+
+  // Fit the word to the available width by reducing font-size if necessary
+  function fitWord() {
+    const el = wordEl;
+    // reset to base font size
+    const base = 28;
+    const min = 12;
+    el.style.fontSize = base + 'px';
+    // Allow a slightly wider container width (left panel padding included)
+    const containerWidth = el.parentElement.clientWidth - 20; // small padding allowance
+    let fs = base;
+    if (!el.textContent) return;
+    // shrink until it fits or minimum reached
+    while (fs > min && el.scrollWidth > containerWidth) {
+      fs -= 1;
+      el.style.fontSize = fs + 'px';
+    }
+  }
+
+  // Update word display & UI
+  function updateUI(){
+    wordEl.textContent = display.join(' ');
+    wrongLettersEl.textContent = wrongLetters.join(' ');
+    wrongCountEl.textContent = wrongCount;
+    // Fit the displayed word so it stays on one line
+    fitWord();
+    // enable all letter buttons that weren't used
+    document.querySelectorAll('.letter-btn').forEach(btn => {
+      const c = btn.dataset.letter;
+      if (usedLetters.has(c)) {
+        btn.classList.add('disabled');
+        btn.disabled = true;
+      } else {
+        btn.classList.remove('disabled');
+        btn.disabled = false;
+      }
+    });
+    statusEl.className = 'status';
+    statusEl.textContent = 'Pick a letter';
+    winRateEl.textContent = `Win rate: ${computeWinRate()}%`;
+  }
+
+  function computeWinRate(){
+    const total = wins + losses;
+    return total ? Math.round((wins/total)*100) : 0;
+  }
+
+  // Process guessed letter
+  function tryLetter(letter){
+    if (!/^[A-Z]$/.test(letter)) return;
+    if (usedLetters.has(letter)) return;
+    usedLetters.add(letter);
+
+    // check occurrences
+    const occurrences = [];
+    for (let i=0;i<secret.length;i++){
+      if (secret[i] === letter) occurrences.push(i);
+    }
+
+    if (occurrences.length){
+      occurrences.forEach(i => display[i] = letter);
+      updateUI();
+      // check win
+      if (!display.includes('_')){
+        // win
+        wins++;
+        winsEl.textContent = wins;
+        statusEl.textContent = `You win! The state was ${secret}.`;
+        statusEl.className = 'status win';
+        disableAllLetters();
+      } else {
+        statusEl.textContent = `Good — ${occurrences.length} letter(s)`;
+      }
+    } else {
+      wrongLetters.push(letter);
+      wrongCount++;
+      wrongCountEl.textContent = wrongCount;
+      updateUI();
+      drawHangman(wrongCount);
+      if (wrongCount >= MAX_WRONG){
+        // lose
+        losses++;
+        lossesEl.textContent = losses;
+        statusEl.textContent = `You lost — the state was ${secret}.`;
+        statusEl.className = 'status lose';
+        revealAnswer();
+        disableAllLetters();
+      } else {
+        statusEl.textContent = `Wrong — ${MAX_WRONG - wrongCount} guesses left`;
+      }
+    }
+  }
+
+  function disableAllLetters(){
+    document.querySelectorAll('.letter-btn').forEach(b => { b.disabled = true; b.classList.add('disabled'); });
+  }
+
+  function revealAnswer(){
+    // fill display with secret
+    display = Array.from(secret);
+    updateUI();
+  }
+
+  // Buttons
+  nextBtn.addEventListener('click', () => {
+    pickSecret();
+  });
+  restartBtn.addEventListener('click', () => {
+    wins = 0; losses = 0; round = 0;
+    winsEl.textContent = wins; lossesEl.textContent = losses; roundEl.textContent = round;
+    pickSecret();
+  });
+  revealBtn.addEventListener('click', () => {
+    revealAnswer();
+    disableAllLetters();
+  });
+
+  // Keyboard support
+  window.addEventListener('keydown', (e) => {
+    const k = e.key.toUpperCase();
+    if (/^[A-Z]$/.test(k)) {
+      tryLetter(k);
+    } else if (k === 'N'){ pickSecret(); }
+    else if (k === 'R'){ wins = 0; losses = 0; round = 0; winsEl.textContent = wins; lossesEl.textContent = losses; pickSecret(); }
+    else if (k === 'V'){ revealAnswer(); disableAllLetters(); }
+  });
+
+  // Drawing hangman
+  function drawBase(){
+    // clear
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = '#333';
+    // base (wider)
+    ctx.beginPath();
+    ctx.moveTo(20,320);
+    ctx.lineTo(320,320);
+    ctx.stroke();
+    // pole
+    ctx.beginPath();
+    ctx.moveTo(80,320);
+    ctx.lineTo(80,20);
+    ctx.lineTo(260,20);
+    ctx.lineTo(260,60);
+    ctx.stroke();
+  }
+
+  function drawHangman(step){
+    // step: number of wrong guesses (1..MAX_WRONG)
+    // We'll draw in this order: head, body, left arm, right arm, left leg, right leg
+    const centerX = 260;
+    const headY = 110;
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = '#111';
+    ctx.fillStyle = '#111';
+    if (step >= 1){
+      // head
+      ctx.beginPath();
+      ctx.arc(centerX, headY, 26, 0, Math.PI*2);
+      ctx.stroke();
+    }
+    if (step >= 2){
+      // body
+      ctx.beginPath();
+      ctx.moveTo(centerX, headY + 26);
+      ctx.lineTo(centerX, headY + 26 + 80);
+      ctx.stroke();
+    }
+    if (step >= 3){
+      // left arm
+      ctx.beginPath();
+      ctx.moveTo(centerX, headY + 50);
+      ctx.lineTo(centerX - 40, headY + 30 + 30);
+      ctx.stroke();
+    }
+    if (step >= 4){
+      // right arm
+      ctx.beginPath();
+      ctx.moveTo(centerX, headY + 50);
+      ctx.lineTo(centerX + 40, headY + 30 + 30);
+      ctx.stroke();
+    }
+    if (step >= 5){
+      // left leg
+      ctx.beginPath();
+      ctx.moveTo(centerX, headY + 26 + 80);
+      ctx.lineTo(centerX - 36, headY + 26 + 80 + 50);
+      ctx.stroke();
+    }
+    if (step >= 6){
+      // right leg
+      ctx.beginPath();
+      ctx.moveTo(centerX, headY + 26 + 80);
+      ctx.lineTo(centerX + 36, headY + 26 + 80 + 50);
+      ctx.stroke();
+    }
+  }
+
+  // Initialize
+  buildAlphabet();
+  pickSecret();
+
+  // expose small helper for debugging in console if needed
+  window._hangman = { pickSecret, tryLetter, revealAnswer };
+})();
+</script>
+</body>
+</html>
